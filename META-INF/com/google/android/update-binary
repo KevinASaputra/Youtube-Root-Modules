@@ -1,0 +1,287 @@
+#!/sbin/sh
+
+#################
+# Initialization
+#################
+
+umask 022
+
+# Global vars
+TMPDIR=/dev/tmp
+#PERSISTDIR=/sbin/.magisk/mirror/persist
+
+rm -rf $TMPDIR 2>/dev/null
+mkdir -p $TMPDIR
+
+#Code by Coolapk@余空_YuK
+_grep_prop() {
+  local REGEX="s/$1=//p"
+  shift
+  local FILES=$@
+  [[ -z $FILES ]] && FILES="/system/build.prop /vendor/build.prop /product/build.prop"
+  sed -n $REGEX $FILES 2>/dev/null | head -n 1
+}
+Time=$(date +"%H:%M:%S %d-%m-%Y")
+Device=$(getprop ro.product.device)
+Name=$(getprop ro.product.name)
+Market_Name=$(getprop ro.product.marketname)
+Version=$(getprop ro.build.version.incremental)
+Android=$(getprop ro.build.version.release)
+SDK=$(getprop ro.build.version.sdk)
+CPU_ABI=$(getprop ro.product.cpu.abi)
+Hardware=$(getprop ro.boot.hardware)
+Rom=$(getprop ro.build.display.id) 
+Kernel=$(uname -r) 
+Model=$(_grep_prop ro\.product\.model)
+[[ -z $Model ]] && Model=$(_grep_prop ro\.product\.vendor\.model)
+Brand=$(_grep_prop ro\.product\.model)
+[[ -z $Brand ]] && Brand=$(_grep_prop ro\.product\.vendor\.brand)
+[[ -e /sys/block/sda/size ]] && ROM_TYPE="UFS" || ROM_TYPE="eMMC"
+[[ -e /proc/scsi/scsi ]] && UFS_MODEL=$(sed -n 3p /proc/scsi/scsi | awk '/Vendor/{print $2}') && Particles=$(sed -n 3p /proc/scsi/scsi | awk '/Vendor/{print $4}') || UFS_MODEL="unknown"
+
+# echo before loading util_functions
+ui_print() { echo "$1"; }
+
+require_new_magisk() {
+  ui_print "*******************************"
+  ui_print " Please install Magisk v19.0+! "
+  ui_print "*******************************"
+  exit 1
+}
+
+is_legacy_script() {
+  unzip -l "$ZIPFILE" install.sh | grep -q install.sh
+  return $?
+}
+
+mktouch() {
+  mkdir -p ${1%/*} 2>/dev/null
+  [ -z $2 ] && touch $1 || echo $2 > $1
+  chmod 644 $1
+}
+
+set_permissions() {
+  set_perm_recursive $MODPATH 0 0 0755 0644
+  set_perm_recursive $MODPATH/system/bin 0 0 0755 0755
+}
+SET_PERMISSIONS() {
+  [ -f $MODPATH/service.sh ] && set_perm $MODPATH/service.sh 0 0 0755
+  [ -f $MODPATH/post-fs-data.sh ] && set_perm $MODPATH/post-fs-data.sh 0 0 0755
+  [ -f $MODPATH/uninstall.sh ] && set_perm $MODPATH/uninstall.sh 0 0 0755
+ }
+ 
+print_modname() {
+  local len
+  len=`echo -n $MODNAME | wc -c`
+  len=$((len + 2))
+  local pounds=`printf "%${len}s" | tr ' ' '*'`
+  ui_print "$pounds"
+  ui_print " $MODNAME "
+  ui_print "$pounds"
+  ui_print "*******************"
+  ui_print " Powered by Magisk "
+  ui_print "*******************"
+}
+
+NTH_MI9() {
+ui_print " "
+ui_print "================================================="
+sleep 0.05
+ui_print "--> If you have any bugs, please report them to"
+ui_print " "
+sleep 0.05
+ui_print "--> github.com/KevinASaputra/Youtube-Root-Modules/issues"
+ui_print " "
+sleep 0.05
+ui_print "================================================="
+sleep 0.3
+ui_print " "
+}
+
+BANNER1() {
+#echo "================================================="
+#echo "  * System details *"
+#echo " "
+sleep 0.05
+printf "%-15s %-s\n" "- Flash time:" "$Time"
+sleep 0.05
+printf "%-15s %-s\n" "- Manufacturer:" "$Brand"
+sleep 0.05
+printf "%-15s %-s\n" "- Devices:" "$Device"
+sleep 0.05
+printf "%-15s %-s\n" "- Model:" "$Model"
+sleep 0.05
+  case $Hardware in
+    mt*) printf "%-15s %-s\n" "- Sales model:" "$Market_Name" && sleep 0.05 && printf "%-15s %-s\n" "- DH:" "$Hardware $(($(cat /sys/devices/system/cpu/kernel_max) + 1))nuclear";;
+    *) ;;
+  esac
+sleep 0.05
+printf "%-15s %-s\n" "- Arm Version:" "$CPU_ABI"
+sleep 0.05
+printf "%-15s %-s\n" "- SDK:" "$(getprop ro.build.version.sdk)"
+sleep 0.05
+printf "%-15s %-s\n" "- Android version:" "Android $Android"
+sleep 0.05
+printf "%-15s %-s\n" "- System version:" "$Version"
+sleep 0.05
+printf "%-15s %-s\n" "- Android Rom:" "$Rom"
+sleep 0.05
+ram=$(cat /proc/meminfo | head -n 1 |  awk '{print $2}')
+printf "%-15s %-s\n" "- Memory size: $(awk 'BEGIN {printf("%.1f\n",'$ram'/1000/1000)}') GB ";
+#ram=$(free | grep Mem | awk '{print $2}')
+#printf "%-15s %-s\n" "- Memory size:" "$(awk 'BEGIN {printf("%.1f\n",'$ram'/1000/1000)}') GB "
+#printf "%-15s %-s\n" "- Memory size:" "$(cat /proc/meminfo | head -n 1 | awk '{print $2/1000}')MB"
+sleep 0.05
+printf "%-15s %-s\n" "- Flash type:" "$ROM_TYPE"
+sleep 0.05
+printf "%-15s %-s\n" "- Flash particles:" "$UFS_MODEL $Particles"
+sleep 0.05
+printf "%-15s %-s\n" "- Kernel version:" "$Kernel"
+sleep 0.05
+printf "%-15s %-s\n" "- CPU Info:" "$(getprop ro.hardware)"
+sleep 0.05
+ui_print "================================================="
+sleep 0.3
+echo " "
+}
+
+##############
+# Environment
+##############
+
+OUTFD=$2
+ZIPFILE=$3
+
+mount /data 2>/dev/null
+
+# Load utility functions
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+[ $MAGISK_VER_CODE -gt 18100 ] || require_new_magisk
+
+# Preperation for flashable zips
+setup_flashable
+
+# Mount partitions
+mount_partitions
+
+# Detect version and architecture
+api_level_arch_detect
+
+# Setup busybox and binaries
+$BOOTMODE && boot_actions || recovery_actions
+
+##############
+# Preparation
+##############
+
+# Extract prop file
+unzip -o "$ZIPFILE" module.prop -d $TMPDIR >&2
+[ ! -f $TMPDIR/module.prop ] && abort "! Unable to extract zip file!"
+
+$BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+MODULEROOT=$NVBASE/$MODDIRNAME
+MODID=`grep_prop id $TMPDIR/module.prop`
+MODPATH=$MODULEROOT/$MODID
+MODNAME=`grep_prop name $TMPDIR/module.prop`
+
+# Create mod paths
+rm -rf $MODPATH 2>/dev/null
+mkdir -p $MODPATH
+
+##########
+# Install
+##########
+
+if is_legacy_script; then
+  unzip -oj "$ZIPFILE" module.prop install.sh uninstall.sh 'common/*' -d $TMPDIR >&2
+
+  # Load install script
+  . $TMPDIR/install.sh
+
+  # Callbacks
+  BANNER
+  on_install
+
+  # Custom uninstaller
+  [ -f $TMPDIR/uninstall.sh ] && cp -af $TMPDIR/uninstall.sh $MODPATH/uninstall.sh
+
+  # Skip mount
+  $SKIPMOUNT && touch $MODPATH/skip_mount
+
+  # prop file
+  $PROPFILE && cp -af $TMPDIR/system.prop $MODPATH/system.prop
+
+  # Module info
+  cp -af $TMPDIR/module.prop $MODPATH/module.prop
+
+  # post-fs-data scripts
+  $POSTFSDATA && cp -af $TMPDIR/post-fs-data.sh $MODPATH/post-fs-data.sh
+
+  # service scripts
+  $LATESTARTSERVICE && cp -af $TMPDIR/service.sh $MODPATH/service.sh
+  
+  ui_print "- Setting permissions"
+  set_permissions
+else
+  BANNER
+
+  unzip -o "$ZIPFILE" customize.sh -d $MODPATH >&2
+
+  if ! grep -q '^SKIPUNZIP=1$' $MODPATH/customize.sh 2>/dev/null; then
+    ui_print "- Extracting module files"
+    unzip -o "$ZIPFILE" -x 'META-INF/*' -d $MODPATH >&2
+
+    # Default permissions
+    set_perm_recursive $MODPATH 0 0 0755 0644
+  fi
+
+  # Load customization script
+  [ -f $MODPATH/customize.sh ] && . $MODPATH/customize.sh
+  
+    # post-fs-data scripts
+  [ -f $MODPATH/post-fs-data.sh ] && cp -af $TMPDIR/post-fs-data.sh $MODPATH/post-fs-data.sh
+
+  # service scripts
+  [ -f $MODPATH/service.sh ] && cp -af $TMPDIR/service.sh $MODPATH/service.sh
+  
+  #ui_print "- Setting permissions"
+  #set_permissions
+  SET_PERMISSIONS
+fi
+
+# Handle replace folders
+for TARGET in $REPLACE; do
+  ui_print "- Replace target: $TARGET"
+  mktouch $MODPATH$TARGET/.replace
+done
+
+if $BOOTMODE; then
+  # Update info for Magisk Manager
+  mktouch $NVBASE/modules/$MODID/update
+  cp -af $MODPATH/module.prop $NVBASE/modules/$MODID/module.prop
+fi
+
+# Copy over custom sepolicy rules
+if [ -f $MODPATH/sepolicy.rule ]; then
+    ui_print "- Installing custom sepolicy rules"
+    copy_sepolicy_rules
+fi
+
+# Remove stuffs that don't belong to modules
+rm -rf \
+$MODPATH/system/placeholder $MODPATH/customize.sh \
+$MODPATH/README.md $MODPATH/.git* 2>/dev/null
+
+##############
+# Finalizing
+##############
+
+cd /
+$BOOTMODE || recovery_cleanup
+rm -rf $TMPDIR
+
+NTH_MI9
+ui_print "- Done"
+ui_print " "
+exit 0
